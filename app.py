@@ -1,90 +1,87 @@
-# app.py
-global book_id_counter 
-from flask import Flask
+from flask import Flask, jsonify
 from flask.views import MethodView
-from flask_smorest import Blueprint, Api
-from schemas import BookSchema
+from flask_smorest import Blueprint, Api, abort
+from schemas import TodoSchema
+from models import Todo, Session
 
-# 우리 도서관을 만들기 위해 Flask 앱을 시작해요.
+# Flask 애플리케이션 설정
 app = Flask(__name__)
-# API 문서화를 위한 설정을 추가해요.
-app.config["API_TITLE"] = "책 관리 API"
+app.config["API_TITLE"] = "할 일 목록 API"
 app.config["API_VERSION"] = "v1"
 app.config["OPENAPI_VERSION"] = "3.0.2"
 app.config["OPENAPI_URL_PREFIX"] = "/"
 app.config["OPENAPI_SWAGGER_UI_PATH"] = "/swagger-ui"
 app.config["OPENAPI_SWAGGER_UI_URL"] = "https://cdn.jsdelivr.net/npm/swagger-ui-dist/"
 
-# API를 만들 준비를 해요.
 api = Api(app)
 
-# 'books'라는 이름의 새로운 창구를 만들어요.
-blp = Blueprint("books", __name__, url_prefix="/books", description="책 관련 작업")
+# API 블루프린트 생성
+blp = Blueprint("todos", __name__, url_prefix="/todos", description="할 일 관련 작업")
 
-# 도서관에 있는 책들을 잠시 담아둘 목록(리스트)을 만들어요.
-# 지금은 책이 없어요.
-BOOKS = []
-book_id_counter = 1
-
-# 'Book'이라는 도서관 관리자를 만들 거예요.
-# 이 관리자는 손님의 요청에 따라 책을 찾아주거나, 넣어주거나, 바꿔주거나, 없애주는 일을 해요.
 @blp.route("/")
-class Book(MethodView):
-    # 📚 GET 요청: 도서관에 있는 모든 책 목록을 보여줘!
-    @blp.response(200, BookSchema(many=True))
-    def get(self):
-        # 모든 책 목록을 손님에게 보여줘요.
-        return BOOKS
+class TodoList(MethodView):
+ @blp.response(200, TodoSchema(many=True))
+ def get(self):
+ """전체 할 일 목록 조회"""
+ session = Session()
+ todos = session.query(Todo).all()
+ session.close()
+ return todos
 
-    # ✍️ POST 요청: 새 책을 도서관에 넣어줘!
-    @blp.arguments(BookSchema)
-    @blp.response(201, BookSchema)
-   # app.py의 post 메서드
-    def post(self, new_book_data):
-    
-    
-    new_book_data["id"] = book_id_counter
-    
-    BOOKS.append(new_book_data)
-    book_id_counter += 1
-    return new_book_data
+ @blp.arguments(TodoSchema)
+ @blp.response(201, TodoSchema)
+ def post(self, new_todo_data):
+ """새로운 할 일 추가"""
+ session = Session()
+ new_todo = Todo(**new_todo_data)
+ session.add(new_todo)
+ session.commit()
+ session.refresh(new_todo)
+ session.close()
+ return new_todo
 
-@blp.route("/<int:book_id>")
-class BookDetail(MethodView):
-    # 🔍 GET 요청: 특정 번호의 책을 찾아줘!
-    @blp.response(200, BookSchema)
-    def get(self, book_id):
-        # 책 목록에서 번호에 맞는 책을 찾아줘요.
-        book = next((book for book in BOOKS if book["id"] == book_id), None)
-        # 만약 책이 없으면 에러를 내보내요.
-        if book is None:
-            blp.abort(404, message="책을 찾을 수 없어요.")
-        return book
+@blp.route("/<int:todo_id>")
+class Todo(MethodView):
+ @blp.response(200, TodoSchema)
+ def get(self, todo_id):
+ """특정 할 일 조회"""
+ session = Session()
+ todo = session.query(Todo).get(todo_id)
+ if todo is None:
+ abort(404, message="할 일을 찾을 수 없습니다.")
+ session.close()
+ return todo
 
-    # ✏️ PUT 요청: 특정 번호의 책 정보를 바꿔줘!
-    @blp.arguments(BookSchema)
-    @blp.response(200, BookSchema)
-    def put(self, update_data, book_id):
-        # 책 목록에서 번호에 맞는 책을 찾아요.
-        book = next((book for book in BOOKS if book["id"] == book_id), None)
-        # 만약 책이 없으면 에러를 내보내요.
-        if book is None:
-            blp.abort(404, message="책을 찾을 수 없어요.")
-        # 찾은 책의 정보를 새로운 정보로 바꿔줘요.
-        book.update(update_data)
-        return book
+ @blp.arguments(TodoSchema)
+ @blp.response(200, TodoSchema)
+ def put(self, update_data, todo_id):
+ """특정 할 일 수정"""
+ session = Session()
+ todo = session.query(Todo).get(todo_id)
+ if todo is None:
+ abort(404, message="할 일을 찾을 수 없습니다.")
 
-    # 🗑️ DELETE 요청: 특정 번호의 책을 없애줘!
-    @blp.response(204)
-    def delete(self, book_id):
-        global BOOKS
-        # 책 목록에서 번호에 맞는 책을 빼버려요.
-        BOOKS = [book for book in BOOKS if book["id"] != book_id]
-        # 성공적으로 지웠다고 알려줘요. (내용이 없어도 돼요)
-        return ""
+ for key, value in update_data.items():
+ setattr(todo, key, value)
+ 
+ session.commit()
+ session.close()
+ return todo
 
-# 마지막으로, 'books' 창구를 우리 도서관에 연결해요.
+ @blp.response(204)
+ def delete(self, todo_id):
+ """특정 할 일 삭제"""
+ session = Session()
+ todo = session.query(Todo).get(todo_id)
+ if todo is None:
+ abort(404, message="할 일을 찾을 수 없습니다.")
+
+ session.delete(todo)
+ session.commit()
+ session.close()
+ return ""
+
 api.register_blueprint(blp)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+ app.run(debug=True)
